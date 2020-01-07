@@ -1,33 +1,28 @@
 'use strict'
 
 /*    understand/
- * By default we retry the get request couple of time - once after a
- * second and once after 5, then after 15, and 25 seconds. This makes
- * the request 'slow' but more stable.
+ * By default we retry the request couple of time - once after a second
+ * and once after 5, then after 15, and 25 seconds. This makes the
+ * request slower but more stable.
  */
-function get(type, params, cb) {
-  retry([1,5,15,25], get_, type, params, cb)
-}
-
-/*    understand/
- * By default we retry the post request couple of time - once after a
- * second and once after 5, then after 15, and 25 seconds. This makes
- * the request 'slow' but more stable.
- */
-function post(type, params, cb) {
-  retry([1,5,15,25], post_, type, params, cb)
+function msx(type, params, cb) {
+  if(typeof params == 'function') {
+    cb = params
+    params = null
+  }
+  try {
+    retry([1,5,15,25], type, params, cb)
+  } catch(e) {
+    console.log(e)
+    cb("Failed to complete. Please try again after some time.")
+  }
 }
 
 /*    outcome/
  * Call the function and, if it fails, call it again on the given
- * schedule. Note that we don't want to call the function multiple
- * times, so if the function is the 'get' or 'post' (which already calls
- * retry) we change it to the more 'raw' version - 'get_' or 'post_'
+ * schedule.
  */
-function retry(schedule, fn, type, params, cb) {
-  if(fn == get) fn = get_
-  if(fn == post) fn = post_
-
+function retry(schedule, type, params, cb) {
   if(typeof params == 'function') {
     cb = params
     params = null
@@ -41,7 +36,7 @@ function retry(schedule, fn, type, params, cb) {
    * current index and previous is the time till next try.
    */
   function call_ndx_1(ndx) {
-    fn(type, params, (err, res) => {
+    send_(type, params, (err, res) => {
       if(!err) return cb(err, res)
       if(ndx >= schedule.length) return cb(err, res)
       if(err.noretry) return cb(err, res)
@@ -52,20 +47,18 @@ function retry(schedule, fn, type, params, cb) {
   }
 }
 
-function get_(type, params, cb) {
-  send_('GET', type, params, cb)
-}
-
-function post_(type, params, cb) {
-  send_('POST', type, params, cb)
-}
-
 /*    outcome/
  * We get the location of the service for the given type and send an
  * AJAX request, handling redirects when requested.
  */
-function send_(verb_, type, params, cb) {
+function send_(type, params, cb) {
   let url_ = getLocation(type)
+  if(!url_) {
+    return cb({
+      msg: `Error - no route to ${type} found`,
+      noretry: true
+    })
+  }
   if(typeof params == 'function') {
     cb = params
     params = null
@@ -75,13 +68,10 @@ function send_(verb_, type, params, cb) {
 
   xhr.onreadystatechange = function() {
     if(xhr.readyState !== XMLHttpRequest.DONE) return
-    handleResponse(xhr.status, xhr.responseText, (err, resp) => {
-      if(err && err.redirect) redirect(err.msg, verb_, type, params, cb)
-      else cb(err, resp)
-    })
+    handleResponse(xhr.status, xhr.responseText, cb)
   }
 
-  xhr.open(verb_, url_)
+  xhr.open("POST", url_)
   if(params) {
     xhr.setRequestHeader("Content-Type", "application/json")
     xhr.send(JSON.stringify(params))
@@ -92,22 +82,20 @@ function send_(verb_, type, params, cb) {
 
 /*    understand/
  * If the response status is:
- *  0: the connection has failed
- *  300: the request has to be redirected
- *  400: the request has failed - do not retry
- *  500: the request has failed - you can retry
  *  200: the response has succeeded
+ *  500: the request has failed - but you can retry
+ *  0: the connection has failed - you can retry
+ *  (anything else): the request has failed - do not retry
  *
  *    outcome/
  * If we have a JSON response then return that, otherwise create a JSON
  * object with the response as a message field (if we don't have a
- * response at all use a default message). Then we return the given
- * callback.
+ * response at all use a default message).
  *
- * If there are errors we set the `noretry` or `redirect` fields and
- * return the callback error.  If an error message looks like a HTML
- * response we output it to the console and use the default message
- * again.
+ * On errors we check the status and set the `noretry` field.
+ * Additionally, if the error message looks like a HTML response (many
+ * 404 errors are full HTML pages), we output it to the console and
+ * simply return the default message.
  */
 function handleResponse(status, resp, cb) {
   const defaultMsg = "Failed to complete. Please try again after some time."
@@ -122,17 +110,15 @@ function handleResponse(status, resp, cb) {
   }
 
   if(status == 200) return cb(null, resp)
-  else {
-    if(status == 300) resp.redirect = true
-    if(status >= 400 && status < 500) resp.noretry = true
 
-    if(is_html_1(resp.msg)) {
-      console.error(resp.msg)
-      resp.msg = defaultMsg
-    }
+  if(status !== 0 && status !== 500) resp.noretry = true
 
-    return cb(resp)
+  if(is_html_1(resp.msg)) {
+    console.error(resp.msg)
+    resp.msg = defaultMsg
   }
+
+  return cb(resp)
 
   /*    outcome/
    * We check if there are a few fields that look like HTML and if there
@@ -158,24 +144,8 @@ function handleResponse(status, resp, cb) {
   }
 }
 
-let LOCATIONS = {}
-/*    outcome/
- * If the type has a specific endpoint set, we use that. Otherwise we
- * use our current server.
- */
 function getLocation(type) {
-  let svr
-  if(LOCATIONS[type]) svr = LOCATIONS[type]
-  else svr = `${window.location.protocol}//${window.location.host}`
+  let svr = `${window.location.protocol}//${window.location.host}`
   if(svr[svr.length-1] == '/') return `${svr}${type}`
   else return `${svr}/${type}`
-}
-
-/*    outcome/
- * Set the type to be located at the new location and then make another
- * AJAX request which will now be sent to the new redirect
- */
-function redirect(loc, verb_, type, params, cb) {
-  LOCATIONS[type] = loc
-  send_(verb_, type, params, cb)
 }
