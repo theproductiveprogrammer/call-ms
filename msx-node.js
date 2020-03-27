@@ -10,16 +10,50 @@ const logger = pino()
  * By default we retry the request couple of time - once after a second
  * and once after 5, then after 15, and 25 seconds. This makes the
  * request slower but more stable.
+ *
+ *    problem/
+ * The retry must be done only when the request originates from the
+ * calling service and not when it is part of a chain otherwise we will
+ * get multiple requests for the same action.
+ *
+ *    For example:
+ *
+ *   register user ---> save user ---> send mail
+ *                (should       (should
+ *                retry)        NOT retry)
+ *
+ * If the second microservice retries before returning then the first
+ * will timeout anyway and send multiple requests to register the same
+ * user.
+ *
+ *    way/
+ * We send the request with a standard retry schedule unless the user
+ * has specified 'once:type' as the type.
+ *
+ *    For example:
+ *    msx('mailer', { to: ... }, cb) will retry
+ *    msx('once:mailer', { to: ... }, cb) will only send once before
+ *    failing.
  */
 function msx(type, params, cb) {
   if(typeof params == 'function') {
     cb = params
     params = null
   }
+
   try {
-    retry([1,5,15,25], type, params, cb)
+    if(can_retry_1(type)) retry([1,5,15,25], type, params, cb)
+    else send_(strip_1(type), params, cb)
   } catch(e) {
     cb(e)
+  }
+
+  function can_retry_1(type) {
+    return !type.startsWith('once:')
+  }
+
+  function strip_1(type) {
+    return type.substring('once:'.length)
   }
 }
 
@@ -43,6 +77,7 @@ function retry(schedule, type, params, cb) {
   function call_ndx_1(ndx) {
     send_(type, params, (err, res) => {
       if(!err) return cb(err, res)
+      logger.error(err)
       if(ndx >= schedule.length) return cb(err, res)
       if(err.noretry) return cb(err, res)
       let retryafter = schedule[ndx]
@@ -57,12 +92,14 @@ function retry(schedule, type, params, cb) {
  * AJAX request, handling redirects when requested.
  */
 function send_(type, params, cb) {
+  cb = callOnceOnly(cb)
+
   getLocation(type, (err, url_) => {
     if(err) cb(err)
-    else send_to_url_1(url_)
+    else send_to_url_1(url_, cb)
   })
 
-  function send_to_url_1(url_) {
+  function send_to_url_1(url_, cb) {
     if(!url_) {
       return cb({
         msg: `Error - no route to ${type} found`,
@@ -90,6 +127,10 @@ function send_(type, params, cb) {
 
     let req = http.request(options, gather_response_1)
     req.on('error', cb)
+    req.setTimeout(1000, () => {
+      cb({ timeout: true })
+      req.abort()
+    })
     if(params) req.write(params)
     req.end()
   }
@@ -101,6 +142,26 @@ function send_(type, params, cb) {
     res.on('end', () => {
       handleResponse(res.statusCode, resp, cb)
     })
+  }
+}
+
+/*    problem/
+ * Nodejs HTTP module uses events to handle various cases. The problem
+ * then becomes calling the callback correctly in all cases. For
+ * example, we may want to call the callback on the 'close' event but in
+ * some cases an error will occur and we don't want to call it then.
+ * This came up especially because of the timeout case.
+ *
+ *    way/
+ * We wrap the callback in another function that invokes it only once
+ * irrespective of how many times it itself is called.
+ */
+function callOnceOnly(cb) {
+  let called = false
+  return (err, resp) => {
+    if(called) return
+    called = true
+    cb(err, resp)
   }
 }
 

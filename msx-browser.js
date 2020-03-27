@@ -4,17 +4,51 @@
  * By default we retry the request couple of time - once after a second
  * and once after 5, then after 15, and 25 seconds. This makes the
  * request slower but more stable.
+ *
+ *    problem/
+ * The retry must be done only when the request originates from the
+ * calling service and not when it is part of a chain otherwise we will
+ * get multiple requests for the same action.
+ *
+ *    For example:
+ *
+ *   register user ---> save user ---> send mail
+ *                (should       (should
+ *                retry)        NOT retry)
+ *
+ * If the second microservice retries before returning then the first
+ * will timeout anyway and send multiple requests to register the same
+ * user.
+ *
+ *    way/
+ * We send the request with a standard retry schedule unless the user
+ * has specified 'once:type' as the type.
+ *
+ *    For example:
+ *    msx('mailer', { to: ... }, cb) will retry
+ *    msx('once:mailer', { to: ... }, cb) will only send once before
+ *    failing.
  */
 function msx(type, params, cb) {
   if(typeof params == 'function') {
     cb = params
     params = null
   }
+
   try {
-    retry([1,5,15,25], type, params, cb)
+    if(can_retry_1(type)) retry([1,5,15,25], type, params, cb)
+    else send_(strip_1(type), params, cb)
   } catch(e) {
     console.log(e)
     cb("Failed to complete. Please try again after some time.")
+  }
+
+  function can_retry_1(type) {
+    return !type.startsWith('once:')
+  }
+
+  function strip_1(type) {
+    return type.substring('once:'.length)
   }
 }
 
@@ -68,10 +102,19 @@ function send_(type, params, cb) {
 
   xhr.onreadystatechange = function() {
     if(xhr.readyState !== XMLHttpRequest.DONE) return
+    if(called) return
+    called = true
     handleResponse(xhr.status, xhr.responseText, cb)
   }
 
+  xhr.ontimeout = function(e) {
+    if(called) return
+    called = true
+    handleResponse(504, null, cb)
+  }
+
   xhr.open("POST", url_)
+  xhr.timeout = 2000
   if(params) {
     xhr.setRequestHeader("Content-Type", "application/json")
     xhr.send(JSON.stringify(params))
