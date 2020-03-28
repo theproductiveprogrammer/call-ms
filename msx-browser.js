@@ -114,7 +114,7 @@ function send_(type, params, cb) {
   }
 
   xhr.open("POST", url_)
-  xhr.timeout = 2000
+  xhr.timeout = 30*1000
   if(params) {
     xhr.setRequestHeader("Content-Type", "application/json")
     xhr.send(JSON.stringify(params))

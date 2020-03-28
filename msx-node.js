@@ -127,7 +127,7 @@ function send_(type, params, cb) {
 
     let req = http.request(options, gather_response_1)
     req.on('error', cb)
-    req.setTimeout(1000, () => {
+    req.setTimeout(10000, () => {
       cb({ timeout: true })
       req.abort()
     })
