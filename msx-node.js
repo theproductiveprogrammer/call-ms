@@ -27,47 +27,51 @@ const logger = pino()
  * user.
  *
  *    way/
- * We send the request with a standard retry schedule unless the user
- * has specified 'once:type' as the type.
+ * By default we do our own retries and timeouts. However, if the first
+ * parameter is not just the "type" but an object we use the options
+ * passed in instead of the defaults.
  *
  *    For example:
- *    msx('mailer', { to: ... }, cb) will retry
- *    msx('once:mailer', { to: ... }, cb) will only send once before
- *    failing.
+ *    msx('mailer', { to: ... }, cb) ==> normal call
+ *    msx({
+ *    type: 'mailer',
+ *    retry: false,   // or [2,34,...] seconds
+ *    timeout: 4000,
+ *    headers: { 'Content-Type': 'application/json', .. }
+ *    }, { to: ... }, cb) ==> uses our retry, timeout, and headers
  */
 function msx(type, params, cb) {
   if(typeof params == 'function') {
     cb = params
     params = null
   }
+  let opts = setupOptions(type)
 
   try {
-    if(can_retry_1(type)) retry([1,5,15,25], type, params, cb)
-    else send_(strip_1(type), params, cb)
+    reqret(opts, params, cb)
   } catch(e) {
     cb(e)
   }
+}
 
-  function can_retry_1(type) {
-    return !type.startsWith('once:')
+function setupOptions(o) {
+  if(typeof o === 'string') o = { type: o }
+  let defaults = {
+    method: 'POST',
+    retry: [1,5,15,25],
+    timeout: 1000,
+    headers: null,
   }
-
-  function strip_1(type) {
-    return type.substring('once:'.length)
-  }
+  return Object.assign(defaults, o)
 }
 
 /*    outcome/
- * Call the function and, if it fails, call it again on the given
- * schedule.
+ * Request microservice and, if it fails, call it again on the given
+ * retry schedule if provided.
  */
-function retry(schedule, type, params, cb) {
-  if(typeof params == 'function') {
-    cb = params
-    params = null
-  }
-
-  call_ndx_1(0)
+function reqret(opts, params, cb) {
+  if(opts.retry && opts.retry.length) call_ndx_1(0)
+  else send_(opts, params, cb)
 
   /*    outcome/
    * Call the function and return if success. If failure we retry using
@@ -75,26 +79,27 @@ function retry(schedule, type, params, cb) {
    * current index and previous is the time till next try.
    */
   function call_ndx_1(ndx) {
-    send_(type, params, (err, res) => {
+    send_(opts, params, (err, res) => {
       if(!err) return cb(err, res)
       logger.error(err)
-      if(ndx >= schedule.length) return cb(err, res)
+      if(ndx >= opts.retry.length) return cb(err, res)
       if(err.noretry) return cb(err, res)
-      let retryafter = schedule[ndx]
-      if(ndx) retryafter -= schedule[ndx-1]
+      let retryafter = opts.retry[ndx]
+      if(ndx) retryafter -= opts.retry[ndx-1]
       setTimeout(() => call_ndx_1(ndx+1), retryafter * 1000)
     })
   }
 }
 
 /*    outcome/
- * We get the location of the service for the given type and send an
- * AJAX request, handling redirects when requested.
+ * We get the location of the microservice type and send the request to
+ * there , handling data and error and timeout events in a way that
+ * calls our callback only once.
  */
-function send_(type, params, cb) {
+function send_(opts, params, cb) {
   cb = callOnceOnly(cb)
 
-  getLocation(type, (err, url_) => {
+  getLocation(opts.type, (err, url_) => {
     if(err) cb(err)
     else send_to_url_1(url_, cb)
   })
@@ -102,20 +107,16 @@ function send_(type, params, cb) {
   function send_to_url_1(url_, cb) {
     if(!url_) {
       return cb({
-        msg: `Error - no route to ${type} found`,
+        msg: `Error - no route to ${opts.type} found`,
         noretry: true
       })
-    }
-    if(typeof params == 'function') {
-      cb = params
-      params = null
     }
 
     let options = {
       hostname: url_.hostname,
       port: url_.port,
-      path: '/' + type,
-      method: 'POST',
+      path: '/' + opts.type,
+      method: opts.method,
     }
     if(params) {
       params = JSON.stringify(params)
@@ -123,11 +124,14 @@ function send_(type, params, cb) {
         'Content-Type': 'application/json',
         'Content-Length': params.length,
       }
+      if(opts.headers) {
+        options.headers = Object.assign(options.headers, opts.headers)
+      }
     }
 
     let req = http.request(options, gather_response_1)
     req.on('error', cb)
-    req.setTimeout(10000, () => {
+    req.setTimeout(opts.timeout, () => {
       cb({ timeout: true })
       req.abort()
     })

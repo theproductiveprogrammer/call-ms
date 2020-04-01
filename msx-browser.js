@@ -21,48 +21,52 @@
  * user.
  *
  *    way/
- * We send the request with a standard retry schedule unless the user
- * has specified 'once:type' as the type.
+ * By default we do our own retries and timeouts. However, if the first
+ * parameter is not just the "type" but an object we use the options
+ * passed in instead of the defaults.
  *
  *    For example:
- *    msx('mailer', { to: ... }, cb) will retry
- *    msx('once:mailer', { to: ... }, cb) will only send once before
- *    failing.
+ *    msx('mailer', { to: ... }, cb) ==> normal call
+ *    msx({
+ *    type: 'mailer',
+ *    retry: false,   // or [2,34,...] seconds
+ *    timeout: 4000,
+ *    headers: { 'Content-Type': 'application/json', .. }
+ *    }, { to: ... }, cb) ==> uses our retry, timeout, and headers
  */
 function msx(type, params, cb) {
   if(typeof params == 'function') {
     cb = params
     params = null
   }
+  let opts = setupOptions(type)
 
   try {
-    if(can_retry_1(type)) retry([1,5,15,25], type, params, cb)
-    else send_(strip_1(type), params, cb)
+    reqret(opts, params, cb)
   } catch(e) {
     console.log(e)
     cb("Failed to complete. Please try again after some time.")
   }
+}
 
-  function can_retry_1(type) {
-    return !type.startsWith('once:')
+function setupOptions(o) {
+  if(typeof o === 'string') o = { type: o }
+  let defaults = {
+    method: 'POST',
+    retry: [1,5,15,25],
+    timeout: 14000,
+    headers: null,
   }
-
-  function strip_1(type) {
-    return type.substring('once:'.length)
-  }
+  return Object.assign(defaults, o)
 }
 
 /*    outcome/
- * Call the function and, if it fails, call it again on the given
- * schedule.
+ * Request microservice and, if it fails, call it again on the given
+ * retry schedule if provided.
  */
-function retry(schedule, type, params, cb) {
-  if(typeof params == 'function') {
-    cb = params
-    params = null
-  }
-
-  call_ndx_1(0)
+function reqret(opts, params, cb) {
+  if(opts.retry && opts.retry.length) call_ndx_1(0)
+  else send_(opts, params, cb)
 
   /*    outcome/
    * Call the function and return if success. If failure we retry using
@@ -70,12 +74,14 @@ function retry(schedule, type, params, cb) {
    * current index and previous is the time till next try.
    */
   function call_ndx_1(ndx) {
-    send_(type, params, (err, res) => {
+    send_(opts, params, (err, res) => {
       if(!err) return cb(err, res)
-      if(ndx >= schedule.length) return cb(err, res)
+      if(ndx >= opts.retry.length) return cb(err, res)
       if(err.noretry) return cb(err, res)
-      let retryafter = schedule[ndx]
-      if(ndx) retryafter -= schedule[ndx-1]
+      console.error(err)
+      let retryafter = opts.retry[ndx]
+      if(ndx) retryafter -= opts.retry[ndx-1]
+      console.log(`Retrying after ${retryafter} seconds...`)
       setTimeout(() => call_ndx_1(ndx+1), retryafter * 1000)
     })
   }
@@ -83,21 +89,19 @@ function retry(schedule, type, params, cb) {
 
 /*    outcome/
  * We get the location of the service for the given type and send an
- * AJAX request, handling redirects when requested.
+ * AJAX request, handling timeouts or responses (whichever happens
+ * first)
  */
-function send_(type, params, cb) {
-  let url_ = getLocation(type)
+function send_(opts, params, cb) {
+  let url_ = getLocation(opts.type)
   if(!url_) {
     return cb({
       msg: `Error - no route to ${type} found`,
       noretry: true
     })
   }
-  if(typeof params == 'function') {
-    cb = params
-    params = null
-  }
 
+  let called = false
   let xhr = new XMLHttpRequest()
 
   xhr.onreadystatechange = function() {
@@ -107,16 +111,23 @@ function send_(type, params, cb) {
     handleResponse(xhr.status, xhr.responseText, cb)
   }
 
-  xhr.ontimeout = function(e) {
+  xhr.ontimeout = function() {
     if(called) return
     called = true
     handleResponse(504, null, cb)
   }
 
-  xhr.open("POST", url_)
-  xhr.timeout = 30*1000
+  xhr.open(opts.method, url_)
+  xhr.timeout = opts.timeout
   if(params) {
-    xhr.setRequestHeader("Content-Type", "application/json")
+    opts.headers = Object.assign({
+    "Content-Type": "application/json"
+    }, opts.headers)
+  }
+  for(let k in opts.headers) {
+    xhr.setRequestHeader(k, opts.headers[k])
+  }
+  if(params) {
     xhr.send(JSON.stringify(params))
   } else {
     xhr.send()
