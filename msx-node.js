@@ -5,40 +5,9 @@ const http = require('http')
 const pino = require('pino')
 const logger = pino()
 
-
-/*    understand/
- * By default we retry the request couple of time - once after a second
- * and once after 5, then after 15, and 25 seconds. This makes the
- * request slower but more stable.
- *
- *    problem/
- * The retry must be done only when the request originates from the
- * calling service and not when it is part of a chain otherwise we will
- * get multiple requests for the same action.
- *
- *    For example:
- *
- *   register user ---> save user ---> send mail
- *                (should       (should
- *                retry)        NOT retry)
- *
- * If the second microservice retries before returning then the first
- * will timeout anyway and send multiple requests to register the same
- * user.
- *
- *    way/
- * By default we do our own retries and timeouts. However, if the first
- * parameter is not just the "type" but an object we use the options
- * passed in instead of the defaults.
- *
- *    For example:
- *    msx('mailer', { to: ... }, cb) ==> normal call
- *    msx({
- *    type: 'mailer',
- *    retry: false,   // or [2,34,...] seconds
- *    timeout: 4000,
- *    headers: { 'Content-Type': 'application/json', .. }
- *    }, { to: ... }, cb) ==> uses our retry, timeout, and headers
+/*    outcome/
+ * Call the given microservice type with the given parameters.
+ * If type is an object use it to update the various parameters.
  */
 function msx(type, params, cb) {
   if(typeof params == 'function') {
