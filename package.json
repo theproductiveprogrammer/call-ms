@@ -1,0 +1,15 @@
+{
+  "name": "@tpp/call-ms",
+  "version": "1.0.0",
+  "description": "Simple Microservice Scaffolding",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theproductiveprogrammer/call-ms.git"
+  },
+  "author": "charles.lobo@gmail.com",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/theproductiveprogrammer/call-ms/issues"
+  },
+  "homepage": "https://github.com/theproductiveprogrammer/call-ms#readme"
+}
