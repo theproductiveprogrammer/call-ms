@@ -175,3 +175,5 @@ function getLocation(type) {
   if(svr[svr.length-1] == '/') return `${svr}${type}`
   else return `${svr}/${type}`
 }
+
+module.exports = msx
