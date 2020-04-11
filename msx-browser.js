@@ -1,15 +1,18 @@
 'use strict'
+const hlc = require('@tpp/hybrid-logical-clock')
 
 /*    outcome/
  * Call the given microservice type with the given parameters.
- * If type is an object use it to update the various parameters.
+ * Type can be an object which contains options and we ensure that all
+ * calls have a unique id so they can be identified.
  */
 function msx(type, params, cb) {
   if(typeof params == 'function') {
     cb = params
-    params = null
+    params = {}
   }
   let opts = setupOptions(type)
+  if(!params.msxid) params.msxid = hlc.nxt()
 
   try {
     reqret(opts, params, cb)

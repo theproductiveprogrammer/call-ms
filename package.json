@@ -11,5 +11,8 @@
   "bugs": {
     "url": "https://github.com/theproductiveprogrammer/call-ms/issues"
   },
-  "homepage": "https://github.com/theproductiveprogrammer/call-ms#readme"
+  "homepage": "https://github.com/theproductiveprogrammer/call-ms#readme",
+  "dependencies": {
+    "@tpp/hybrid-logical-clock": "^1.0.0"
+  }
 }
