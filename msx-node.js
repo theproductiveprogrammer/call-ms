@@ -169,6 +169,8 @@ function handleResponse(status, resp, cb) {
 
   if(status == 200) return cb(null, resp)
 
+  resp.status = status
+
   if(status !== 0 && status !== 500) resp.noretry = true
 
   if(is_html_1(resp.msg)) {
